@@ -1,0 +1,92 @@
+apiVersion: tekton.dev/v1alpha1
+kind: Task
+metadata:
+  name: igc-nodejs-test
+spec:
+  inputs:
+    resources:
+      - name: source
+        type: git
+    params:
+      - name: js-image
+        type: string
+        default: node:12-stretch
+  stepTemplate:
+    envFrom:
+      - configMapRef:
+          name: pactbroker-config
+          optional: true
+  steps:
+    - name: build
+      image: $(inputs.params.js-image)
+      workingdir: $(inputs.resources.source.path)
+      command: ["/bin/bash"]
+      args:
+        - -c
+        - |
+          set -e
+          npm install
+          if [ -d client ]; then
+            pushd client
+            npm install
+            popd
+          fi
+          npm run build --if-present
+    - name: test
+      image: $(inputs.params.js-image)
+      workingdir: $(inputs.resources.source.path)
+      command: ["/bin/bash"]
+      args:
+        - -c
+        - |
+          set -e
+          CI=true npm test
+    - name: publish-pact
+      image: $(inputs.params.js-image)
+      workingdir: $(inputs.resources.source.path)
+      command: ["/bin/bash"]
+      args:
+        - -c
+        - |
+          set -e
+          if [ -n "${PACTBROKER_URL}" ]; then
+              npm run pact:publish --if-present
+          else 
+              echo "Skipping Pact publish"
+          fi
+    - name: verify-pact
+      image: $(inputs.params.js-image)
+      workingdir: $(inputs.resources.source.path)
+      command: ["/bin/bash"]
+      args:
+        - -c
+        - |
+          set -e
+          if [ -n "${PACTBROKER_URL}" ]; then
+              npm run pact:verify --if-present
+          else 
+              echo "Skipping Pact publish"
+          fi
+    - name: sonar-scan
+      image: $(inputs.params.js-image)
+      workingdir: $(inputs.resources.source.path)
+      envFrom:
+        - configMapRef:
+            name: sonarqube-config
+            optional: true
+        - secretRef:
+            name: sonarqube-access
+            optional: true
+      env:
+        - name: SONAR_USER_HOME
+          value: $(inputs.resources.source.path)
+      command: ["/bin/bash"]
+      args:
+        - -c
+        - |
+          set -e
+          if [ -n "${SONARQUBE_URL}" ]; then
+              npm run sonarqube:scan --if-present
+          else 
+              echo "Skipping Sonar Qube step"
+          fi
